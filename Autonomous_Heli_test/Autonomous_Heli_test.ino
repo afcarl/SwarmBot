@@ -22,7 +22,7 @@ const byte PITCH_STATIONARY = 63;//The value that the helicopter's pitch is when
 const byte CAL_BYTE = 65;//The calibration value to send as part of the overall package to send to the helicopter
 
 unsigned int throttle = 0;//The value of the throttle to send
-const unsigned int THROTTLE_MAX = 25;//The max value that the throttle will attain before throttling back down.
+const unsigned int THROTTLE_MAX = 100;//The max value that the throttle will attain before throttling back down.
 boolean going_up = true;//Whether or not the helicopter is currently going up.
 
 /**
@@ -187,8 +187,11 @@ void loop()
  
 void timerISR()
 {
+  if (!going_up)
+    return;
+    
   //Throttle value between 0 and 255 max - but really 0 and MAX_THROTTLE
-  throttle = going_up ? throttle + 20 : throttle - 20;
+  throttle = going_up ? throttle + 10 : throttle - 10;
   
   if (throttle >= THROTTLE_MAX)
   {
