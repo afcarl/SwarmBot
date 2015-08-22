@@ -1,6 +1,6 @@
-const unsigned int TRIG_PIN = 13;
-const unsigned int ECHO_PIN = 12;
-const unsigned int LED = 11;
+const unsigned int TRIG_PIN = 12;
+const unsigned int ECHO_PIN = 11;
+const unsigned int LED = 13;
 
 void setup()
 {
@@ -30,7 +30,7 @@ void loop()
   if (distance < 4)  // This is where the LED On/Off happens
     digitalWrite(LED, HIGH);
   else 
-    digitalWrite(led,LOW);
+    digitalWrite(LED, LOW);
   
   if (distance >= 200 || distance <= 0)
   {

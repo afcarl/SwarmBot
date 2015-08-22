@@ -1,22 +1,11 @@
 /**
-This sketch is straight from this website, but modified for my own helicopter:
-http://www.kerrywong.com/2012/08/27/reverse-engineering-the-syma-s107g-ir-protocol/
-It is designed to control the syma s107/s107g helicopter via three potentiometers
-and an IR LED. It uses the TimerOne library:
-http://www.arduino.cc/playground/code/timer1
+This sketch seeks to do exactly the same thing as Autonomous_Heli_test, but uses the main loop
+rather than the timer.
 */
 
 #include <TimerOne.h>
 
-//comment this out to see the demodulated waveform
-//it is useful for debugging purpose.
-#define MODULATED 1
-
-const unsigned int IR_PIN = 3;//The IR pin
-const unsigned int THROTTLE_PIN = A0;//The analog pin for the throttle pot
-const unsigned int YAW_PIN = A1;//The analog pin for the yaw pot
-const unsigned int PITCH_PIN = A2;//The analog pin for the pitch pin
-const unsigned long DURATION = 180000l;//The period (microseconds) of the timer cycle (0.18 seconds)
+const unsigned int IR_PIN = 11;//The IR pin
 const unsigned int HEADER_DURATION = 2000;//The duration (microseconds) of the header signal
 const unsigned int HIGH_DURATION = 380;//The duration (microseconds) that a bit being sent is HIGH (the LOW duration determines the value of the bit)
 const unsigned int ZERO_LOW_DURATION = 220;//The duration (microseconds) that a 0 bit being sent is LOW
@@ -25,7 +14,9 @@ const byte YAW_STATIONARY = 63;//The value that the helicopter's yaw is when it 
 const byte PITCH_STATIONARY = 63;//The value that the helicopter's pitch is when it is not pitching
 const byte CAL_BYTE = 65;//The calibration value to send as part of the overall package to send to the helicopter
 
-int throttle, yaw, pitch; //The three pot readings
+unsigned int throttle = 0;//The value of the throttle to send
+const unsigned int THROTTLE_MAX = 100;//The max value that the throttle will attain before throttling back down.
+boolean going_up = true;//Whether or not the helicopter is currently going up.
 
 /**
 Sends the header signal over IR (the header is sent
@@ -34,35 +25,13 @@ a new command is coming).
 */
 void sendHeader()
 {
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, HIGH);
-  #else
-    TCCR2A |= _BV(COM2B1);
-  #endif
-   
+  TCCR2A |= _BV(COM2B1);
   delayMicroseconds(HEADER_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, LOW);
-  #else
-    TCCR2A &= ~_BV(COM2B1);
-  #endif
-   
+  TCCR2A &= ~_BV(COM2B1);
   delayMicroseconds(HEADER_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, HIGH);
-  #else
-    TCCR2A |= _BV(COM2B1);
-  #endif
-   
+  TCCR2A |= _BV(COM2B1);
   delayMicroseconds(HIGH_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, LOW);
-  #else
-    TCCR2A &= ~_BV(COM2B1);
-  #endif
+  TCCR2A &= ~_BV(COM2B1);
 }
 
 /**
@@ -72,21 +41,11 @@ in the helicopter's protocol.
 void sendZero()
 {
   Serial.print(0);
-  delayMicroseconds(ZERO_LOW_DURATION);
- 
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, HIGH);
-  #else  
-    TCCR2A |= _BV(COM2B1);
-  #endif
-   
-  delayMicroseconds(HIGH_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, LOW);
-  #else
-    TCCR2A &= ~_BV(COM2B1);
-  #endif
+  
+  delayMicroseconds(ZERO_LOW_DURATION);  
+  TCCR2A |= _BV(COM2B1);
+  delayMicroseconds(HIGH_DURATION); 
+  TCCR2A &= ~_BV(COM2B1);
 }
 
 /**
@@ -96,21 +55,11 @@ in the helicopter's protocol.
 void sendOne()
 {
   Serial.print(1);
+  
   delayMicroseconds(ONE_LOW_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, HIGH);
-  #else
-    TCCR2A |= _BV(COM2B1);
-  #endif
-   
+  TCCR2A |= _BV(COM2B1);
   delayMicroseconds(HIGH_DURATION);
-   
-  #ifndef MODULATED
-    digitalWrite(IR_PIN, LOW);  
-  #else
-    TCCR2A &= ~_BV(COM2B1);
-  #endif
+  TCCR2A &= ~_BV(COM2B1);
 }
 
 /**
@@ -169,11 +118,7 @@ void setup()
   digitalWrite(IR_PIN, LOW);
   
   Serial.begin(9600);
- 
-  //setup interrupt interval: 180ms  
-  Timer1.initialize(DURATION);//Sets up the period of the timer in microseconds
-  Timer1.attachInterrupt(timerISR);//Attach the interrupt service routine
-   
+  
   //setup PWM: f=38Khz PWM=0.5
   byte v = 8000 / 38;
   TCCR2A = _BV(WGM20);
@@ -181,23 +126,28 @@ void setup()
   OCR2A = v;
   OCR2B = v / 2;
 }
- 
+
 void loop()
-{  
-    
-}
- 
-void timerISR()
 {
-  //read control values from potentiometers
-  throttle = analogRead(THROTTLE_PIN);
-  yaw = analogRead(YAW_PIN);
-  pitch = analogRead(PITCH_PIN);
-  
-  throttle = throttle / 4; //convert to 0 to 255 (analog read returns 0 to 1023)
-  yaw = yaw / 8 - 64; //convert to -64 to 63
-  pitch = pitch / 4 - 128; //convert to -128 to 127
-   
-  sendCommand(throttle, yaw, pitch);
+  packageAndSend();
+  delay(180);
 }
 
+void packageAndSend()
+{
+  //Throttle value between 0 and 255 max - but really 0 and MAX_THROTTLE
+  throttle = going_up ? throttle + 10 : throttle - 10;
+  
+  if (throttle >= THROTTLE_MAX)
+  {
+    throttle = THROTTLE_MAX;
+    going_up = false;
+  }
+  else if (throttle <= 0)
+  {
+    throttle = 0;
+    going_up = true;
+  }
+
+  sendCommand(throttle, 0, 0);
+}
