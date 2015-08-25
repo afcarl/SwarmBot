@@ -20,6 +20,16 @@ Make sure the IR packets get sent based on the current
 value in distance. IR is no longer attached to an interrupt -
 just runs in the loop.
 
+  Check!
+  Debug version 1.1:
+  Try sending data at a faster rate than every 180ms. Also,
+  fine-tune the DELTA_THROTTLE to make sure that it provides
+  a FAST, but SMOOTH change in throttle values.
+
+  Check!
+  Debug version 1.2:
+  Get it to start on its own (must be zero for like 10 sends, then positive for 10ish).
+
 ------
 Debug version 2:
 Final version - smooth out the noisy distance values by using
@@ -56,7 +66,18 @@ const long MAX_DIST = 80;//cm - hcsr04 caps out at about 80 before noise starts 
 /**
 IR stuff
 */
+//These values are not yet used - I put them here to remind myself that
+//the pitch and the yaw must also have a maximum value - if you send a value that is too large, you 
+//const byte MAX_PITCH = 126;//The maximum pitch that can be sent
+//const byte MAX_YAW = 126;//The maximum yaw that can be sent
+const byte MAX_THROTTLE = 126;//The maximum throttle value that can be sent
 unsigned int throttle = 0;//The value of the throttle to send to the heli
+unsigned int old_throttle = 0;//The previous value of the throttle sent. The new value should never be more than delta_throttle more or less than throttle
+const unsigned int DELTA_THROTTLE = 20;//The maximum change in the throttle between two moments
+/**Throttle value must be smooth with respect to time - don't let it change too much one way or another in any given package*/
+
+//Flag for sending the lift_off signal
+boolean has_not_lifted_off = true;
 
 void setup()
 {
@@ -89,8 +110,42 @@ void setup()
 
 void loop()
 {
+  if (has_not_lifted_off)
+  {
+    liftOff();
+    has_not_lifted_off = false;
+  }  
+  
   packageAndSend();
-  delay(180);//delay 180 ms to give the heli time to breathe
+  delay(60);//delay 60 ms to give the heli time to breathe
+}
+
+/**
+Sends 10 low throttles, then 10 high throttles - the helicopter requires a few lows then
+a few highs to start responding to the IR signal.
+*/
+void liftOff()
+{
+  Serial.println("Sending liftoff signal");
+  
+  Serial.println("Sending zeros");
+  
+  //send 10 lows, then 10 highs.
+  for (int lows = 30; lows > 0; lows--)
+  {
+    sendCommand(0, 0, 0);//Send a zero throttle signal to the heli
+    delay(20);//delay 20 ms
+  }
+  
+  Serial.println("Sending highs");
+  
+  for (int highs = 30; highs > 0; highs--)
+  {
+    sendCommand(MAX_THROTTLE, 0, 0);//Send the maximum value for the throttle
+    delay(20);//delay 20 ms
+  }
+  
+  Serial.println("Liftoff signal sent");
 }
 
 
@@ -98,13 +153,17 @@ void loop()
 ISR triggered every time the timer overflows - measures the
 distance to the nearest object.
 
+Note to future self who might wonder about the pulseIn function inside
+this function:
+
 PulseIn should work - it doesn't use any interrupts that I can
 see - it seems to just read port values, then increment a
 counter every time it doesn't see a change in the port. Then
 it returns the duration it waited by multiplying the number of
 times it looped over the wait code by the factors needed to
 turn it into microseconds (factors simply determined by clock
-speed).
+speed). So you are fine to use it in an ISR as long as you
+give it a reasonably short timeout value.
 */
 void measureDistanceISR()
 {
@@ -127,7 +186,7 @@ void measureDistanceISR()
   duration = pulseIn(ECHO_PIN, HIGH, TIMEOUT);//Measures the amount of time the ECHO_PIN is HIGH - that time is the distance to the nearest object * 2
   if (duration == 0)
   {
-    //The pulseIn timed out, now there is an eroneous echo out there somewhere - ignore the next pulse to be safe.
+    //The pulseIn timed out, now there may be an eroneous echo out there somewhere - ignore the next pulse to be safe.
     ignore_next_pulse = true;
     return;
   }
@@ -137,17 +196,29 @@ void measureDistanceISR()
 
 /**
 Packages data to send to the heli based on the current
-distance.
+distance to the ground.
 */
 void packageAndSend()
 {
   long dist = distance;
- 
+
   //throttle should be large if distance is small and small if distance is large
-  //so map it
   dist = constrain(dist, MIN_DIST, MAX_DIST);
   Serial.print("Dist: "); Serial.print(dist); Serial.print(" ");
-  throttle = map(dist, MIN_DIST, MAX_DIST, 126, 0);//126 is the maximum value held in the seven bits of data that are actually read by the heli
+  old_throttle = throttle;
+  throttle = map(dist, MIN_DIST, MAX_DIST, MAX_THROTTLE, 0);//126 is the maximum value held in the seven bits of data that are actually read by the heli
+  
+  /*if the new throttle value is too different from the old one, move it closer to the old one*/
+  
+  
+  //Lower lim is 0 if old_throttle <= DELTA_THROTTLE, otherwise it is just old - delta
+  //This is important to check becuase throttle is unsigned
+  unsigned int lower_lim = (old_throttle <= DELTA_THROTTLE) ? 0 : (old_throttle - DELTA_THROTTLE);
+  
+  //Upper lim is whichever is smaller: 126 or old + delta
+  unsigned int upper_lim = min(old_throttle + DELTA_THROTTLE, MAX_THROTTLE);
+  
+  throttle = constrain(throttle, lower_lim, upper_lim);//Make sure that the difference between old throttle and new throttle is no larger than delta_throttle
   Serial.print("Sending: "); Serial.println(throttle);
   sendCommand(throttle, 0, 0);
 }
@@ -210,24 +281,28 @@ void sendCommand(int throttle, int yaw, int pitch)
   
   sendHeader();
   
+  //send the yaw byte
   for (int i = 7; i >=0; i--)
   {
     b = ((YAW_STATIONARY + yaw) & (1 << i)) >> i;    
     if (b > 0) sendOne(); else sendZero();
   }
   
+  //send the pitch byte
   for (int i = 7; i >=0; i--)
   {
     b = ((PITCH_STATIONARY + pitch) & (1 << i)) >> i;    
     if (b > 0) sendOne(); else sendZero();
-  } 
+  }
    
+  //send the throttle byte
   for (int i = 7; i >=0; i--)
   {
     b = (throttle & (1 << i)) >> i;    
     if (b > 0) sendOne(); else sendZero();
   }
   
+  //send the calibration byte
   for (int i = 7; i >=0; i--)
   {
     b = (CAL_BYTE & (1 << i)) >> i;    
