@@ -45,13 +45,6 @@ Pin declarations
 const unsigned int TRIG_PIN = 5;
 const unsigned int ECHO_PIN = 4;
 const unsigned int IR_PIN = 3;//Must be a PWM pin
-const unsigned int HEADER_DURATION = 2000;//The duration (microseconds) of the header signal
-const unsigned int HIGH_DURATION = 380;//The duration (microseconds) of a high signal in the IR protocol (for zero or one)
-const unsigned int ZERO_LOW_DURATION = 220;//The duration (microseconds) of a low signal that indicates a zero bit in the IR protocol
-const unsigned int ONE_LOW_DURATION = 600;//The duration (microseconds) of a low signal that indicates a one bit in the IR protocol
-const byte YAW_STATIONARY = 63;//The value that the helicopter's yaw is when it is not turning
-const byte PITCH_STATIONARY = 63;//The value that the helicopter's pitch is when it is not pitching
-const byte CAL_BYTE = 65;//The calibration value to send as part of the overall package to send to the helicopter
 
 /**
 hcsr04 stuff
@@ -67,14 +60,21 @@ const long MAX_DIST = 80;//cm - hcsr04 caps out at about 80 before noise starts 
 IR stuff
 */
 //These values are not yet used - I put them here to remind myself that
-//the pitch and the yaw must also have a maximum value - if you send a value that is too large, you 
+//the pitch and the yaw must also have a maximum value 
 //const byte MAX_PITCH = 126;//The maximum pitch that can be sent
 //const byte MAX_YAW = 126;//The maximum yaw that can be sent
 const byte MAX_THROTTLE = 126;//The maximum throttle value that can be sent
 unsigned int throttle = 0;//The value of the throttle to send to the heli
 unsigned int old_throttle = 0;//The previous value of the throttle sent. The new value should never be more than delta_throttle more or less than throttle
 const unsigned int DELTA_THROTTLE = 20;//The maximum change in the throttle between two moments
-/**Throttle value must be smooth with respect to time - don't let it change too much one way or another in any given package*/
+const unsigned int HEADER_DURATION = 2000;//The duration (microseconds) of the header signal
+const unsigned int HIGH_DURATION = 380;//The duration (microseconds) of a high signal in the IR protocol (for zero or one)
+const unsigned int ZERO_LOW_DURATION = 220;//The duration (microseconds) of a low signal that indicates a zero bit in the IR protocol
+const unsigned int ONE_LOW_DURATION = 600;//The duration (microseconds) of a low signal that indicates a one bit in the IR protocol
+const byte YAW_STATIONARY = 63;//The value that the helicopter's yaw is when it is not turning
+const byte PITCH_STATIONARY = 63;//The value that the helicopter's pitch is when it is not pitching
+const byte CAL_BYTE = 65;//The calibration value to send as part of the overall package to send to the helicopter
+
 
 //Flag for sending the lift_off signal
 boolean has_not_lifted_off = true;
@@ -121,7 +121,7 @@ void loop()
 }
 
 /**
-Sends 10 low throttles, then 10 high throttles - the helicopter requires a few lows then
+Sends 30 low throttles, then 30 high throttles - the helicopter requires a few lows then
 a few highs to start responding to the IR signal.
 */
 void liftOff()
@@ -130,7 +130,7 @@ void liftOff()
   
   Serial.println("Sending zeros");
   
-  //send 10 lows, then 10 highs.
+  //send 30 lows, then 30 highs.
   for (int lows = 30; lows > 0; lows--)
   {
     sendCommand(0, 0, 0);//Send a zero throttle signal to the heli
@@ -167,10 +167,11 @@ give it a reasonably short timeout value.
 */
 void measureDistanceISR()
 {
+  //Try to guarantee some fidelity
   if (ignore_next_pulse)
   {
     ignore_next_pulse = false;
-    return;
+    return;//This pulse is possibly a noisy rogue one; ignore it and wait for the next one
   }
   
   /*
